@@ -8,7 +8,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dragonflyoss/image-service/smoke/tests/tool"
+	"github.com/dragonflyoss/nydus/smoke/tests/tool"
+)
+
+const (
+	defaultSnapshotter           = "nydus"
+	defaultSnapshotterSystemSock = "/run/containerd-nydus/system.sock"
 )
 
 func TestMain(m *testing.M) {

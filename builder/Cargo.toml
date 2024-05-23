@@ -5,14 +5,14 @@ description = "Nydus Image Builder"
 authors = ["The Nydus Developers"]
 license = "Apache-2.0"
 homepage = "https://nydus.dev/"
-repository = "https://github.com/dragonflyoss/image-service"
+repository = "https://github.com/dragonflyoss/nydus"
 edition = "2021"
 
 [dependencies]
 anyhow = "1.0.35"
 base64 = "0.21"
 hex = "0.4.3"
-indexmap = "1"
+indexmap = "2"
 libc = "0.2"
 log = "0.4"
 nix = "0.24"

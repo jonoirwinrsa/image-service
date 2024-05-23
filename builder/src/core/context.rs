@@ -903,7 +903,7 @@ impl BlobManager {
                 let iv = crypt::Cipher::generate_random_iv()?;
                 let cipher_ctx = CipherContext::new(key, iv, false, ctx.cipher)?;
                 (
-                    ctx.cipher.new_cipher().ok().unwrap_or(Default::default()),
+                    ctx.cipher.new_cipher().ok().unwrap_or_default(),
                     Some(cipher_ctx),
                 )
             }
@@ -1516,6 +1516,7 @@ mod tests {
             id: "id".to_owned(),
             cache: None,
             rafs: None,
+            overlay: None,
             internal: ConfigV2Internal {
                 blob_accessible: Arc::new(AtomicBool::new(true)),
             },

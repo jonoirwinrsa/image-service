@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/containerd/log"
-	"github.com/dragonflyoss/image-service/smoke/tests/texture"
-	"github.com/dragonflyoss/image-service/smoke/tests/tool"
-	"github.com/dragonflyoss/image-service/smoke/tests/tool/test"
+	"github.com/dragonflyoss/nydus/smoke/tests/texture"
+	"github.com/dragonflyoss/nydus/smoke/tests/tool"
+	"github.com/dragonflyoss/nydus/smoke/tests/tool/test"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/require"
 )
@@ -83,7 +83,7 @@ func (a *BlobCacheTestSuite) TestCommandFlags(t *testing.T) {
 			bootstrap:      fmt.Sprintf("--bootstrap %s", ctx.Env.BootstrapPath),
 			testArgs:       fmt.Sprintf("--blob-dir %s --blob-cache-dir %s", ctx.Env.BlobDir, blobcacheDir),
 			success:        false,
-			expectedOutput: "The argument '--blob-dir <blob-dir>' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
+			expectedOutput: "argument '--blob-dir <blob-dir>' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
 		},
 		{
 			name:           "conflict with --blob",
@@ -91,7 +91,7 @@ func (a *BlobCacheTestSuite) TestCommandFlags(t *testing.T) {
 			bootstrap:      fmt.Sprintf("--bootstrap %s", ctx.Env.BootstrapPath),
 			testArgs:       fmt.Sprintf("--blob %s --blob-cache-dir %s", "xxxxxx", blobcacheDir),
 			success:        false,
-			expectedOutput: "The argument '--blob <blob>' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
+			expectedOutput: "argument '--blob <blob>' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
 		},
 		{
 			name:           "conflict with --blob-inline-meta",
@@ -99,7 +99,7 @@ func (a *BlobCacheTestSuite) TestCommandFlags(t *testing.T) {
 			bootstrap:      "",
 			testArgs:       fmt.Sprintf("--blob-inline-meta --blob-cache-dir %s", blobcacheDir),
 			success:        false,
-			expectedOutput: "The argument '--blob-inline-meta' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
+			expectedOutput: "argument '--blob-inline-meta' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
 		},
 		{
 			name:           "conflict with --compressor",
@@ -107,7 +107,7 @@ func (a *BlobCacheTestSuite) TestCommandFlags(t *testing.T) {
 			bootstrap:      fmt.Sprintf("--bootstrap %s", ctx.Env.BootstrapPath),
 			testArgs:       fmt.Sprintf("--compressor zstd --blob-cache-dir %s", blobcacheDir),
 			success:        false,
-			expectedOutput: "The argument '--compressor <compressor>' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
+			expectedOutput: "argument '--compressor <compressor>' cannot be used with '--blob-cache-dir <blob-cache-dir>'",
 		},
 
 		{

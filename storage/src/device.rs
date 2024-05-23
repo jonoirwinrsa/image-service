@@ -554,7 +554,7 @@ impl BlobInfo {
             }
             guard.deref().clone()
         } else {
-            hex::encode(&self.blob_meta_digest)
+            hex::encode(self.blob_meta_digest)
         };
         Ok(id)
     }
@@ -635,6 +635,9 @@ pub trait BlobChunkInfo: Any + Sync + Send {
         self.uncompressed_offset() + self.uncompressed_size() as u64
     }
 
+    /// Check whether the chunk is batch chunk or not.
+    fn is_batch(&self) -> bool;
+
     /// Check whether the chunk is compressed or not.
     ///
     /// Some chunk may become bigger after compression, so plain data instead of compressed
@@ -687,6 +690,10 @@ impl BlobChunkInfo for BlobIoChunk {
 
     fn uncompressed_size(&self) -> u32 {
         self.0.uncompressed_size()
+    }
+
+    fn is_batch(&self) -> bool {
+        self.0.is_batch()
     }
 
     fn is_compressed(&self) -> bool {
@@ -742,6 +749,12 @@ impl BlobIoDesc {
     pub fn is_continuous(&self, next: &BlobIoDesc, max_gap: u64) -> bool {
         let prev_end = self.chunkinfo.compressed_offset() + self.chunkinfo.compressed_size() as u64;
         let next_offset = next.chunkinfo.compressed_offset();
+
+        if self.chunkinfo.is_batch() || next.chunkinfo.is_batch() {
+            // Batch chunk can only be compared by uncompressed info.
+            return next.chunkinfo.uncompressed_offset() - self.chunkinfo.uncompressed_end()
+                <= max_gap;
+        }
 
         if self.chunkinfo.blob_index() == next.chunkinfo.blob_index() && next_offset >= prev_end {
             if next.blob.is_legacy_stargz() {
@@ -992,7 +1005,7 @@ impl BlobIoRange {
     }
 
     /// Merge an `BlobIoDesc` into the `BlobIoRange` object.
-    pub fn merge(&mut self, bio: &BlobIoDesc, max_gap: u64) {
+    pub fn merge(&mut self, bio: &BlobIoDesc, _max_gap: u64) {
         let end = self.blob_offset + self.blob_size;
         let offset = bio.chunkinfo.compressed_offset();
         let size = bio.chunkinfo.compressed_size() as u64;
@@ -1000,7 +1013,7 @@ impl BlobIoRange {
             assert!(offset.checked_add(size).is_some());
             size
         } else {
-            assert!((offset > end && offset - end <= max_gap));
+            assert!(offset > end);
             size + (offset - end)
         };
         assert!(end.checked_add(size).is_some());
@@ -1325,12 +1338,9 @@ impl FileReadWriteVolatile for BlobDeviceIoVec<'_> {
         unimplemented!();
     }
 
-    fn read_at_volatile(
-        &mut self,
-        _slice: FileVolatileSlice,
-        _offset: u64,
-    ) -> Result<usize, Error> {
-        unimplemented!();
+    fn read_at_volatile(&mut self, slice: FileVolatileSlice, offset: u64) -> Result<usize, Error> {
+        let buffers = [slice];
+        self.read_vectored_at_volatile(&buffers, offset)
     }
 
     // The default read_vectored_at_volatile only read to the first slice, so we have to overload it.

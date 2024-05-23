@@ -5,7 +5,7 @@ description = "Utilities and helpers for Nydus Image Service"
 authors = ["The Nydus Developers"]
 license = "Apache-2.0 OR BSD-3-Clause"
 homepage = "https://nydus.dev/"
-repository = "https://github.com/dragonflyoss/image-service"
+repository = "https://github.com/dragonflyoss/nydus"
 edition = "2021"
 
 [dependencies]
@@ -17,7 +17,7 @@ libc = "0.2"
 log = "0.4"
 lz4-sys = "1.9.4"
 lz4 = "1.24.0"
-openssl = { version = "0.10.60", features = ["vendored"], optional = true }
+openssl = { version = "0.10.48", features = ["vendored"], optional = true }
 serde = { version = ">=1.0.27", features = ["serde_derive", "rc"] }
 serde_json = ">=1.0.9"
 sha2 = "0.10.0"

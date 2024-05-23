@@ -70,6 +70,10 @@ type NydusdConfig struct {
 	PrefetchFiles   []string
 	AmplifyIO       uint64
 	ChunkDedupDb    string
+	// Overlay config.
+	OvlUpperDir string
+	OvlWorkDir  string
+	Writable    bool
 }
 
 type Nydusd struct {
@@ -110,8 +114,48 @@ var configTpl = `
  }
  `
 
-func makeConfig(conf NydusdConfig) error {
-	tpl := template.Must(template.New("").Parse(configTpl))
+var configOvlTpl = `
+ {
+	"version": 2,
+	"backend": {
+		"type": "localfs",
+		"localfs": {{.BackendConfig}}
+	},
+	"cache": {
+		"type": "blobcache",
+		"filecache": {
+			"work_dir": "{{.BlobCacheDir}}"
+		}
+	},
+	"rafs": {
+		"mode": "{{.RafsMode}}",
+		"enable_xattr": true
+	},
+	"overlay": {
+		"upper_dir": "{{.OvlUpperDir}}",
+		"work_dir": "{{.OvlWorkDir}}"
+	}
+}
+ `
+
+type TemplateType int
+
+const (
+	NydusdConfigTpl TemplateType = iota
+	NydusdOvlConfigTpl
+)
+
+func makeConfig(tplType TemplateType, conf NydusdConfig) error {
+	var tpl *template.Template
+
+	switch tplType {
+	case NydusdConfigTpl:
+		tpl = template.Must(template.New("").Parse(configTpl))
+	case NydusdOvlConfigTpl:
+		tpl = template.Must(template.New("").Parse(configOvlTpl))
+	default:
+		return errors.New("unknown template type")
+	}
 
 	var ret bytes.Buffer
 	if err := tpl.Execute(&ret, conf); err != nil {
@@ -181,7 +225,16 @@ func CheckReady(ctx context.Context, sock string) <-chan bool {
 }
 
 func NewNydusd(conf NydusdConfig) (*Nydusd, error) {
-	if err := makeConfig(conf); err != nil {
+	if err := makeConfig(NydusdConfigTpl, conf); err != nil {
+		return nil, errors.Wrap(err, "create config file for Nydusd")
+	}
+	return &Nydusd{
+		NydusdConfig: conf,
+	}, nil
+}
+
+func NewNydusdWithOverlay(conf NydusdConfig) (*Nydusd, error) {
+	if err := makeConfig(NydusdOvlConfigTpl, conf); err != nil {
 		return nil, errors.Wrap(err, "create config file for Nydusd")
 	}
 	return &Nydusd{
@@ -208,6 +261,9 @@ func (nydusd *Nydusd) Mount() error {
 	}
 	if len(nydusd.ChunkDedupDb) > 0 {
 		args = append(args, "--dedup-db", nydusd.ChunkDedupDb)
+	}
+	if nydusd.Writable {
+		args = append(args, "--writable")
 	}
 
 	cmd := exec.Command(nydusd.NydusdPath, args...)
@@ -240,7 +296,7 @@ func (nydusd *Nydusd) Mount() error {
 
 func (nydusd *Nydusd) MountByAPI(config NydusdConfig) error {
 
-	err := makeConfig(config)
+	err := makeConfig(NydusdConfigTpl, config)
 	if err != nil {
 		return err
 	}

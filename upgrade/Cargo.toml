@@ -5,12 +5,12 @@ description = "Nydus Daemon Upgrade"
 authors = ["The Nydus Developers"]
 license = "Apache-2.0"
 homepage = "https://nydus.dev/"
-repository = "https://github.com/dragonflyoss/image-service"
+repository = "https://github.com/dragonflyoss/nydus"
 edition = "2021"
 
 [dependencies]
 sendfd = "0.4.3"
-dbs-snapshot = "1.5.0"
+dbs-snapshot = "1.5.1"
 thiserror = "1"
 versionize_derive = "0.1.6"
 versionize = "0.1.10"

@@ -11,7 +11,7 @@
 [![Release Version](https://img.shields.io/github/v/release/dragonflyoss/nydus?style=flat)](https://github.com/dragonflyoss/nydus/releases)
 [![License](https://img.shields.io/crates/l/nydus-rs)](https://crates.io/crates/nydus-rs)
 [![Twitter](https://img.shields.io/twitter/url?style=social&url=https%3A%2F%2Ftwitter.com%2Fdragonfly_oss)](https://twitter.com/dragonfly_oss)
-[![Nydus Stars](https://img.shields.io/github/stars/dragonflyoss/image-service?label=Nydus%20Stars&style=social)](https://github.com/dragonflyoss/image-service)
+[![Nydus Stars](https://img.shields.io/github/stars/dragonflyoss/nydus?label=Nydus%20Stars&style=social)](https://github.com/dragonflyoss/nydus)
 
 [![Smoke Test](https://github.com/dragonflyoss/nydus/actions/workflows/smoke.yml/badge.svg?event=schedule)](https://github.com/dragonflyoss/nydus/actions/workflows/smoke.yml?query=event%3Aschedule)
 [![Image Conversion](https://github.com/dragonflyoss/nydus/actions/workflows/convert.yml/badge.svg?event=schedule)](https://github.com/dragonflyoss/nydus/actions/workflows/convert.yml?query=event%3Aschedule)
@@ -170,5 +170,3 @@ Feel free to reach us via Slack or Dingtalk.
 - **Dingtalk:** [34971767](https://qr.dingtalk.com/action/joingroup?code=v1,k1,ioWGzuDZEIO10Bf+/ohz4RcQqAkW0MtOwoG1nbbMxQg=&_dt_no_comment=1&origin=11)
 
 <img src="./misc/dingtalk.jpg" width="250" height="300"/>
-
-- **Technical Meeting:** Every Wednesday at 06:00 UTC (Beijing, Shanghai 14:00), please see our [HackMD](https://hackmd.io/@Nydus/Bk8u2X0p9) page for more information.

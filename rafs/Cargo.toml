@@ -5,7 +5,7 @@ description = "The RAFS filesystem format for Nydus Image Service"
 authors = ["The Nydus Developers"]
 license = "Apache-2.0 OR BSD-3-Clause"
 homepage = "https://nydus.dev/"
-repository = "https://github.com/dragonflyoss/image-service"
+repository = "https://github.com/dragonflyoss/nydus"
 edition = "2021"
 
 [dependencies]
@@ -19,7 +19,7 @@ nix = "0.24"
 serde = { version = "1.0.110", features = ["serde_derive", "rc"] }
 serde_json = "1.0.53"
 vm-memory = "0.10"
-fuse-backend-rs = "^0.11.0"
+fuse-backend-rs = "^0.12.0"
 thiserror = "1"
 
 nydus-api = { version = "0.3", path = "../api" }
