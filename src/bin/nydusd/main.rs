@@ -767,6 +767,11 @@ fn main() -> Result<()> {
         let mgr = CasMgr::new(db).map_err(|e| eother!(format!("{}", e)))?;
         info!("Enable chunk deduplication by using database at {}", db);
         CasMgr::set_singleton(mgr);
+    } else {
+        let db = "/tmp/nydus-dedup.db";
+        let mgr = CasMgr::new(db).map_err(|e| eother!(format!("{}", e)))?;
+        info!("Enable chunk deduplication by using database at {}", db);
+        CasMgr::set_singleton(mgr);
     }
 
     match args.subcommand_name() {
