@@ -1468,7 +1468,7 @@ impl From<FsPrefetchControl> for PrefetchConfigV2 {
 }
 
 /// Configuration information for blob data prefetching.
-#[derive(Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 struct BlobPrefetchConfig {
     /// Whether to enable blob data prefetching.
     pub enable: bool,
@@ -1480,6 +1480,23 @@ struct BlobPrefetchConfig {
     /// Network bandwidth rate limit in unit of Bytes and Zero means no limit.
     #[serde(rename = "bandwidth_rate")]
     pub bandwidth_limit: u32,
+    /// Whether to prefetch all data blobs in full. When disabled, blobs built
+    /// with a prefetch table (RAFS v6 readahead region) are prefetched over
+    /// `[0, prefetch_size)` only; blobs without one fall back to full prefetch.
+    #[serde(default = "default_prefetch_all")]
+    pub prefetch_all: bool,
+}
+
+impl Default for BlobPrefetchConfig {
+    fn default() -> Self {
+        BlobPrefetchConfig {
+            enable: false,
+            threads_count: 0,
+            batch_size: 0,
+            bandwidth_limit: 0,
+            prefetch_all: default_prefetch_all(),
+        }
+    }
 }
 
 impl From<&BlobPrefetchConfig> for PrefetchConfigV2 {
@@ -1489,7 +1506,7 @@ impl From<&BlobPrefetchConfig> for PrefetchConfigV2 {
             threads_count: v.threads_count,
             batch_size: v.batch_size,
             bandwidth_limit: v.bandwidth_limit,
-            prefetch_all: true,
+            prefetch_all: v.prefetch_all,
             ..Default::default()
         }
     }

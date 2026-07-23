@@ -537,7 +537,22 @@ impl FsCacheHandler {
             Some(s) => s as u64,
         };
         let size = std::cmp::max(0x4_0000u64, size);
-        let blob_size = blob_info.compressed_data_size();
+        // With `prefetch_all` disabled, restrict prefetch to the blob's RAFS v6
+        // readahead region `[0, prefetch_size)` — the chunks of files listed in
+        // the image's prefetch table, laid out at the front of the blob by the
+        // builder. Blobs built without a prefetch table (prefetch_size == 0)
+        // fall back to full-blob prefetch, preserving the previous behavior.
+        let blob_size = if !cache_cfg.prefetch.prefetch_all && blob_info.prefetch_size() > 0 {
+            std::cmp::min(blob_info.prefetch_size(), blob_info.compressed_data_size())
+        } else {
+            if !cache_cfg.prefetch.prefetch_all {
+                info!(
+                    "fscache: prefetch_all disabled but blob {} has no prefetch table, prefetching in full",
+                    blob_info.blob_id()
+                );
+            }
+            blob_info.compressed_data_size()
+        };
         let count = blob_size.div_ceil(size);
         let mut blob_req = Vec::with_capacity(count as usize);
         let mut pre_offset = 0u64;
