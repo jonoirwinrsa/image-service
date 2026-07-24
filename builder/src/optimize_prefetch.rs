@@ -17,14 +17,17 @@ use crate::PathBuf;
 use crate::Tree;
 use anyhow::{bail, Context, Result};
 use nydus_api::ConfigV2;
+use nydus_rafs::metadata::layout::v6::RafsV6BlobTable;
 use nydus_rafs::metadata::layout::RafsBlobTable;
 use nydus_rafs::metadata::RafsSuper;
 use nydus_rafs::metadata::RafsVersion;
 use nydus_storage::backend::BlobBackend;
-use nydus_storage::device::BlobInfo;
+use nydus_storage::device::{BlobFeatures, BlobInfo};
 use nydus_storage::meta::BatchContextGenerator;
 use nydus_storage::meta::BlobChunkInfoV2Ondisk;
+use nydus_storage::meta::BlobMetaChunkInfo;
 use nydus_utils::compress;
+use nydus_utils::crypt;
 use serde::Deserialize;
 use sha2::Digest;
 use std::cmp::{max, min};
@@ -71,7 +74,11 @@ impl PrefetchBlobState {
             0,
             ctx.chunk_size,
             u32::MAX,
-            ctx.blob_features,
+            // The prefetch blob is dumped with V2 chunk metadata
+            // (blob_meta_info_enabled below), so its blob table entry must
+            // carry CHUNK_INFO_V2 or loading the optimized bootstrap fails
+            // v6 blob entry validation (ci_d_size vs chunk_count mismatch).
+            ctx.blob_features | BlobFeatures::CHUNK_INFO_V2,
         );
         blob_info.set_compressor(ctx.compressor);
         blob_info.set_separated_with_prefetch_files_feature(true);
@@ -182,7 +189,17 @@ impl OptimizePrefetch {
             RafsBlobTable::V6(table) => table.get_all(),
         };
         blob_mgr.extend_from_blob_table(ctx, blob_info)?;
-        let blob_table_withprefetch = blob_mgr.to_blob_table(ctx)?;
+        // Round-tripping the existing blob entries through BlobContext
+        // rewrites their blob meta fields (ci offset/sizes), which then fail
+        // the runtime blob meta header double-check. Dump the table entries
+        // verbatim instead — the prefetch blob's entry was already refreshed
+        // from its finalized context in dump_blob().
+        let blob_table_withprefetch = match &*blob_table {
+            RafsBlobTable::V6(orig) => RafsBlobTable::V6(RafsV6BlobTable {
+                entries: orig.entries.clone(),
+            }),
+            RafsBlobTable::V5(_) => blob_mgr.to_blob_table(ctx)?,
+        };
 
         bootstrap.dump(
             ctx,
@@ -249,6 +266,31 @@ impl OptimizePrefetch {
                 rewrite_blob_id(&mut table.entries, "prefetch-blob", ctx.blob_id.clone())
             }
         }
+
+        // The entry pushed above was a pre-dump snapshot with zeroed blob meta
+        // fields (ci offset/sizes); refresh it from the finalized blob context
+        // or runtime blob meta validation fails for the prefetch blob.
+        let blob_ctx = &blob_mgr
+            .get_current_blob()
+            .ok_or(anyhow!("failed to get current blob"))?
+            .1;
+        let entries = match blob_table {
+            RafsBlobTable::V5(t) => &mut t.entries,
+            RafsBlobTable::V6(t) => &mut t.entries,
+        };
+        let slot = entries.last_mut().ok_or(anyhow!("empty blob table"))?;
+        let mut entry = (**slot).clone();
+        entry.set_blob_id(blob_ctx.blob_id.clone());
+        entry.set_chunk_count(blob_ctx.chunk_count as usize);
+        entry.set_compressed_size(blob_ctx.compressed_blob_size as usize);
+        entry.set_uncompressed_size(blob_ctx.uncompressed_blob_size as usize);
+        entry.set_blob_meta_info(
+            blob_ctx.blob_meta_header.ci_compressed_offset(),
+            blob_ctx.blob_meta_header.ci_compressed_size(),
+            blob_ctx.blob_meta_header.ci_uncompressed_size(),
+            blob_ctx.blob_meta_header.ci_compressor() as u32,
+        );
+        *slot = Arc::new(entry);
         Ok(())
     }
 
@@ -280,7 +322,7 @@ impl OptimizePrefetch {
         let chunks: &mut Vec<NodeChunk> = child.chunks.as_mut();
         let blob_ctx = &mut prefetch_state.blob_ctx;
         let blob_info = &mut prefetch_state.blob_info;
-        let encrypted = blob_ctx.blob_compressor != compress::Algorithm::None;
+        let encrypted = blob_ctx.blob_cipher != crypt::Algorithm::None;
 
         for chunk in chunks {
             // check the file range
@@ -325,12 +367,20 @@ impl OptimizePrefetch {
             if let RafsBlobTable::V6(_) = blob_table {
                 aligned_d_size = nydus_utils::try_round_up_4k(inner.uncompressed_size())
                     .ok_or_else(|| anyhow!("invalid size"))?;
-                let info = batch.generate_chunk_info(
+                // The chunk's compressed data is copied into the prefetch blob
+                // verbatim, so record it as a plain chunk. It must NOT be
+                // marked as a batch chunk (as `batch.generate_chunk_info()`
+                // would): no batch context table is dumped for this blob, so
+                // batch-flagged chunks fail at runtime with "Invalid batch
+                // index".
+                let info = BlobChunkInfoV2Ondisk::new_plain(
                     blob_ctx.current_compressed_offset,
+                    inner.compressed_size(),
                     blob_ctx.current_uncompressed_offset,
                     inner.uncompressed_size(),
+                    inner.is_compressed(),
                     encrypted,
-                )?;
+                );
                 blob_info.set_meta_ci_compressed_size(
                     (blob_info.meta_ci_compressed_size()
                         + size_of::<BlobChunkInfoV2Ondisk>() as u64) as usize,

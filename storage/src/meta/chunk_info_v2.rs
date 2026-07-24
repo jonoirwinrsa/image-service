@@ -37,6 +37,29 @@ pub struct BlobChunkInfoV2Ondisk {
 }
 
 impl BlobChunkInfoV2Ondisk {
+    /// Create a chunk information record for a chunk whose (possibly
+    /// compressed) data is stored as-is in the blob — not merged into a batch
+    /// buffer nor ZRan-encoded. For builders that copy chunk data verbatim.
+    pub fn new_plain(
+        compressed_offset: u64,
+        compressed_size: u32,
+        uncompressed_offset: u64,
+        uncompressed_size: u32,
+        compressed: bool,
+        encrypted: bool,
+    ) -> Self {
+        let mut info = BlobChunkInfoV2Ondisk::default();
+        info.set_compressed_offset(compressed_offset);
+        info.set_compressed_size(compressed_size);
+        info.set_uncompressed_offset(uncompressed_offset);
+        info.set_uncompressed_size(uncompressed_size);
+        info.set_compressed(compressed);
+        info.set_encrypted(encrypted);
+        info.set_batch(false);
+        info.set_has_crc32(false);
+        info
+    }
+
     pub(crate) fn set_compressed(&mut self, compressed: bool) {
         if compressed {
             self.uncomp_info |= u64::to_le(CHUNK_V2_FLAG_COMPRESSED);

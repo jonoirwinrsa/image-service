@@ -29,7 +29,7 @@ use std::{cmp, env, thread, time};
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token, Waker};
 use nydus_storage::cache::BlobCache;
-use nydus_storage::device::{BlobInfo, BlobPrefetchRequest};
+use nydus_storage::device::{BlobFeatures, BlobInfo, BlobPrefetchRequest};
 use nydus_storage::factory::{ASYNC_RUNTIME, BLOB_FACTORY};
 
 use crate::blob_cache::{
@@ -577,6 +577,20 @@ impl FsCacheHandler {
                 if let Err(e) = blob.prefetch(blob.clone(), &blob_req, &[]) {
                     warn!("fscache: failed to prefetch data for blob {}, {}", id, e);
                 }
+            } else if blob_info
+                .features()
+                .contains(BlobFeatures::IS_SEPARATED_WITH_PREFETCH_FILES)
+            {
+                // Dedicated prefetch blob produced by `nydus-image optimize`:
+                // its entire content is prefetch-table data, laid out
+                // contiguously, so full-blob prefetch of just this blob IS the
+                // targeted prefetch. (Such images carry no inode prefetch
+                // table, so the range resolver finds nothing for them.)
+                info!(
+                    "fscache: blob {} is a dedicated prefetch blob, prefetching in full",
+                    blob_info.blob_id()
+                );
+                Self::prefetch_blob_range(blob, blob_info, blob_info.compressed_data_size(), size);
             } else if blob_info.prefetch_size() > 0 {
                 let blob_size = std::cmp::min(
                     blob_info.prefetch_size(),
