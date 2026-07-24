@@ -18,6 +18,7 @@ use nydus_api::{
 };
 use nydus_rafs::metadata::layout::v6::{EROFS_BLOCK_BITS_12, EROFS_BLOCK_SIZE_4096};
 use nydus_rafs::metadata::{RafsBlobExtraInfo, RafsSuper, RafsSuperFlags};
+use nydus_rafs::RafsIoReader;
 use nydus_storage::cache::BlobCache;
 use nydus_storage::device::BlobInfo;
 use nydus_storage::factory::BLOB_FACTORY;
@@ -87,6 +88,7 @@ pub struct DataBlobConfig {
     blob_info: Arc<BlobInfo>,
     config: Arc<ConfigV2>,
     ref_count: AtomicU32,
+    prefetch_ranges: Vec<(u64, u64)>,
 }
 
 impl DataBlobConfig {
@@ -98,6 +100,13 @@ impl DataBlobConfig {
     /// Get the ['ConfigV2'] object associated with the cached data blob.
     pub fn config_v2(&self) -> &Arc<ConfigV2> {
         &self.config
+    }
+
+    /// Get compressed byte ranges of this blob covering the files listed in the
+    /// RAFS filesystem's prefetch table, sorted and merged. Empty if the image
+    /// was built without a prefetch table.
+    pub fn prefetch_ranges(&self) -> &[(u64, u64)] {
+        &self.prefetch_ranges
     }
 }
 
@@ -119,7 +128,12 @@ impl BlobConfig {
         }
     }
 
-    fn new_data_blob(domain_id: String, blob_info: Arc<BlobInfo>, config: Arc<ConfigV2>) -> Self {
+    fn new_data_blob(
+        domain_id: String,
+        blob_info: Arc<BlobInfo>,
+        config: Arc<ConfigV2>,
+        prefetch_ranges: Vec<(u64, u64)>,
+    ) -> Self {
         let scoped_blob_id = generate_blob_key(&domain_id, &blob_info.blob_id());
 
         BlobConfig::DataBlob(Arc::new(DataBlobConfig {
@@ -127,6 +141,7 @@ impl BlobConfig {
             scoped_blob_id,
             config,
             ref_count: AtomicU32::new(1),
+            prefetch_ranges,
         }))
     }
 
@@ -387,11 +402,12 @@ impl BlobCacheMgr {
         path: PathBuf,
         config: Arc<ConfigV2>,
     ) -> Result<()> {
-        let (rs, _) = RafsSuper::load_from_file(&path, config.clone(), false)?;
+        let (rs, mut reader) = RafsSuper::load_from_file(&path, config.clone(), false)?;
         if rs.meta.is_v5() {
             return Err(einval!("blob_cache: RAFSv5 image is not supported"));
         }
 
+        let prefetch_ranges = Self::resolve_prefetch_table_ranges(&rs, &mut reader);
         let blob_extra_infos = rs.superblock.get_blob_extra_infos()?;
         let meta = BlobConfig::new_meta_blob(
             domain_id.to_string(),
@@ -413,8 +429,12 @@ impl BlobCacheMgr {
                 &bi.blob_id(),
                 domain_id
             );
+            let ranges = prefetch_ranges
+                .get(&bi.blob_index())
+                .cloned()
+                .unwrap_or_default();
             let data_blob =
-                BlobConfig::new_data_blob(domain_id.to_string(), bi, meta_obj.config.clone());
+                BlobConfig::new_data_blob(domain_id.to_string(), bi, meta_obj.config.clone(), ranges);
             let data_blob_config = match &data_blob {
                 BlobConfig::DataBlob(entry) => entry.clone(),
                 _ => panic!("blob_cache: internal error"),
@@ -435,6 +455,33 @@ impl BlobCacheMgr {
         }
 
         Ok(())
+    }
+
+    /// Resolve the RAFS v6 prefetch table (`--prefetch-policy fs` images) into
+    /// per-blob compressed byte ranges, keyed by blob index, so fscache-mode
+    /// prefetch can cover only table-listed files. Returns an empty map for
+    /// images built without a prefetch table.
+    fn resolve_prefetch_table_ranges(
+        rs: &RafsSuper,
+        reader: &mut RafsIoReader,
+    ) -> HashMap<u32, Vec<(u64, u64)>> {
+        match rs.prefetch_table_blob_ranges(reader) {
+            Ok(ranges) => {
+                if !ranges.is_empty() {
+                    let total_bytes: u64 = ranges.values().flatten().map(|r| r.1).sum();
+                    let total_ranges: usize = ranges.values().map(|v| v.len()).sum();
+                    info!(
+                        "blob_cache: resolved prefetch table to {} compressed bytes in {} ranges across {} blobs",
+                        total_bytes, total_ranges, ranges.len()
+                    );
+                }
+                ranges
+            }
+            Err(e) => {
+                warn!("blob_cache: failed to resolve prefetch table: {}", e);
+                HashMap::new()
+            }
+        }
     }
 }
 

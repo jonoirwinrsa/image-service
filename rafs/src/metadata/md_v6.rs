@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Result;
 use std::mem::size_of;
 use std::sync::Arc;
 
-use super::direct_v6::DirectSuperBlockV6;
+use super::direct_v6::{DirectSuperBlockV6, OndiskInodeWrapper};
 use super::layout::v6::{RafsV6PrefetchTable, RafsV6SuperBlock, RafsV6SuperBlockExt};
 use super::layout::RAFS_SUPER_VERSION_V6;
 use super::*;
@@ -150,6 +150,125 @@ impl RafsSuper {
         }
 
         Ok(found_root_inode)
+    }
+
+    /// Resolve the RAFS v6 prefetch table into per-blob compressed byte ranges.
+    ///
+    /// Returns a map of blob index to sorted, merged `(compressed_offset, length)`
+    /// ranges covering the chunks of every regular file listed in the prefetch
+    /// table (directories are expanded to their descendants). All information is
+    /// read from the bootstrap itself through its inlined chunk table, so no
+    /// [BlobDevice] or backend access is required. An empty map is returned for
+    /// images built without a prefetch table.
+    pub fn prefetch_table_blob_ranges(
+        &self,
+        r: &mut RafsIoReader,
+    ) -> RafsResult<HashMap<u32, Vec<(u64, u64)>>> {
+        let mut ranges: HashMap<u32, Vec<(u64, u64)>> = HashMap::new();
+        let hint_entries = self.meta.prefetch_table_entries as usize;
+        if !self.meta.is_v6() || hint_entries == 0 {
+            return Ok(ranges);
+        }
+
+        let mut prefetch_table = RafsV6PrefetchTable::new();
+        prefetch_table
+            .load_prefetch_table_from(r, self.meta.prefetch_table_offset, hint_entries)
+            .map_err(|e| {
+                RafsError::Prefetch(format!(
+                    "Failed in loading hint prefetch table at offset {}. {:?}",
+                    self.meta.prefetch_table_offset, e
+                ))
+            })?;
+
+        let mut hardlinks: HashSet<u64> = HashSet::new();
+        for ino in prefetch_table.inodes {
+            // Inode number 0 is invalid, it was added because prefetch table has to be aligned.
+            if ino == 0 {
+                break;
+            }
+            let inode = match self.superblock.get_inode(ino as u64, false) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("prefetch table: no inode {}: {}", ino, e);
+                    continue;
+                }
+            };
+            if inode.is_dir() {
+                let mut descendants = Vec::new();
+                if let Err(e) = inode.collect_descendants_inodes(&mut descendants) {
+                    warn!("prefetch table: failed to walk dir inode {}: {}", ino, e);
+                    continue;
+                }
+                for child in &descendants {
+                    Self::collect_inode_chunk_ranges(child, &mut ranges, &mut hardlinks);
+                }
+            } else {
+                Self::collect_inode_chunk_ranges(&inode, &mut ranges, &mut hardlinks);
+            }
+        }
+
+        for blob_ranges in ranges.values_mut() {
+            blob_ranges.sort_unstable();
+            let mut merged: Vec<(u64, u64)> = Vec::with_capacity(blob_ranges.len());
+            for &(offset, len) in blob_ranges.iter() {
+                match merged.last_mut() {
+                    Some(last) if offset <= last.0 + last.1 => {
+                        let end = std::cmp::max(last.0 + last.1, offset + len);
+                        last.1 = end - last.0;
+                    }
+                    _ => merged.push((offset, len)),
+                }
+            }
+            *blob_ranges = merged;
+        }
+
+        Ok(ranges)
+    }
+
+    fn collect_inode_chunk_ranges(
+        inode: &Arc<dyn RafsInode>,
+        ranges: &mut HashMap<u32, Vec<(u64, u64)>>,
+        hardlinks: &mut HashSet<u64>,
+    ) {
+        if !inode.is_reg() || inode.size() == 0 {
+            return;
+        }
+        if inode.is_hardlink() {
+            if hardlinks.contains(&inode.ino()) {
+                return;
+            }
+            hardlinks.insert(inode.ino());
+        }
+        // `RafsSuperBlock::get_extended_inode()` rejects non-directory inodes for
+        // RAFS v6, so downcast to reach `RafsInodeExt::get_chunk_info()`, which
+        // resolves chunk addresses through the bootstrap's own chunk table.
+        let wrapper = match inode.as_any().downcast_ref::<OndiskInodeWrapper>() {
+            Some(v) => v,
+            None => {
+                warn!(
+                    "prefetch table: inode {} is not a direct v6 inode, skipping",
+                    inode.ino()
+                );
+                return;
+            }
+        };
+        for idx in 0..wrapper.get_chunk_count() {
+            match wrapper.get_chunk_info(idx) {
+                Ok(chunk) => ranges
+                    .entry(chunk.blob_index())
+                    .or_default()
+                    .push((chunk.compressed_offset(), chunk.compressed_size() as u64)),
+                Err(e) => {
+                    warn!(
+                        "prefetch table: failed to get chunk {} of inode {}: {}",
+                        idx,
+                        inode.ino(),
+                        e
+                    );
+                    return;
+                }
+            }
+        }
     }
 }
 

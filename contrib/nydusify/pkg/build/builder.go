@@ -148,7 +148,11 @@ func (builder *Builder) Run(option BuilderOption) error {
 	}
 
 	if len(option.PrefetchPatterns) > 0 {
-		args = append(args, "--prefetch-policy", "fs")
+		policy := os.Getenv("NYDUSIFY_PREFETCH_POLICY")
+		if policy != "fs" && policy != "blob" {
+			policy = "fs"
+		}
+		args = append(args, "--prefetch-policy", policy)
 	}
 
 	if option.ChunkSize != "" {

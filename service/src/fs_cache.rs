@@ -29,7 +29,7 @@ use std::{cmp, env, thread, time};
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token, Waker};
 use nydus_storage::cache::BlobCache;
-use nydus_storage::device::BlobPrefetchRequest;
+use nydus_storage::device::{BlobInfo, BlobPrefetchRequest};
 use nydus_storage::factory::{ASYNC_RUNTIME, BLOB_FACTORY};
 
 use crate::blob_cache::{
@@ -537,32 +537,81 @@ impl FsCacheHandler {
             Some(s) => s as u64,
         };
         let size = std::cmp::max(0x4_0000u64, size);
-        // With `prefetch_all` disabled, restrict prefetch to the blob's RAFS v6
-        // readahead region `[0, prefetch_size)` — the chunks of files listed in
-        // the image's prefetch table, laid out at the front of the blob by the
-        // builder. Blobs built without a prefetch table (prefetch_size == 0)
-        // fall back to full-blob prefetch, preserving the previous behavior.
-        let blob_size = if !cache_cfg.prefetch.prefetch_all && blob_info.prefetch_size() > 0 {
-            std::cmp::min(blob_info.prefetch_size(), blob_info.compressed_data_size())
-        } else {
-            if !cache_cfg.prefetch.prefetch_all {
+
+        // With `prefetch_all` disabled, prefetch only the compressed ranges
+        // covering the files listed in the image's prefetch table (resolved
+        // from the bootstrap when the meta blob was added), or the blob's
+        // `[0, prefetch_size)` readahead region for `--prefetch-policy blob`
+        // images. A blob covered by neither gets NO prefetch — matching the
+        // fusedev semantics of `prefetch_all=false`, where untabled data is
+        // fetched on demand only. This matters for multi-layer images in
+        // fscache mode: each layer bootstrap is its own meta blob, and layers
+        // holding none of the table's files must not degrade to full-blob
+        // prefetch.
+        if !cache_cfg.prefetch.prefetch_all {
+            let ranges = cfg.prefetch_ranges();
+            if !ranges.is_empty() {
+                let id = blob_info.blob_id().to_owned();
+                let mut blob_req = Vec::with_capacity(ranges.len());
+                let mut total = 0u64;
+                for &(offset, len) in ranges {
+                    total += len;
+                    let end = offset + len;
+                    let mut pos = offset;
+                    while pos < end {
+                        let req_len = cmp::min(size, end - pos);
+                        blob_req.push(BlobPrefetchRequest {
+                            blob_id: id.clone(),
+                            offset: pos,
+                            len: req_len,
+                        });
+                        pos += req_len;
+                    }
+                }
                 info!(
-                    "fscache: prefetch_all disabled but blob {} has no prefetch table, prefetching in full",
+                    "fscache: start to prefetch {} bytes in {} requests from prefetch table for blob {}",
+                    total,
+                    blob_req.len(),
+                    id
+                );
+                if let Err(e) = blob.prefetch(blob.clone(), &blob_req, &[]) {
+                    warn!("fscache: failed to prefetch data for blob {}, {}", id, e);
+                }
+            } else if blob_info.prefetch_size() > 0 {
+                let blob_size = std::cmp::min(
+                    blob_info.prefetch_size(),
+                    blob_info.compressed_data_size(),
+                );
+                Self::prefetch_blob_range(blob, blob_info, blob_size, size);
+            } else {
+                info!(
+                    "fscache: prefetch_all disabled and blob {} has no prefetch table, skipping prefetch (on-demand only)",
                     blob_info.blob_id()
                 );
             }
-            blob_info.compressed_data_size()
-        };
-        let count = blob_size.div_ceil(size);
+            return Ok(());
+        }
+        Self::prefetch_blob_range(blob, blob_info, blob_info.compressed_data_size(), size);
+
+        Ok(())
+    }
+
+    fn prefetch_blob_range(
+        blob: Arc<dyn BlobCache>,
+        blob_info: &BlobInfo,
+        blob_size: u64,
+        batch: u64,
+    ) {
+        let count = blob_size.div_ceil(batch);
         let mut blob_req = Vec::with_capacity(count as usize);
         let mut pre_offset = 0u64;
         for _i in 0..count {
             blob_req.push(BlobPrefetchRequest {
                 blob_id: blob_info.blob_id().to_owned(),
                 offset: pre_offset,
-                len: cmp::min(size, blob_size - pre_offset),
+                len: cmp::min(batch, blob_size - pre_offset),
             });
-            pre_offset += size;
+            pre_offset += batch;
             if pre_offset >= blob_size {
                 break;
             }
@@ -573,8 +622,6 @@ impl FsCacheHandler {
         if let Err(e) = blob.prefetch(blob.clone(), &blob_req, &[]) {
             warn!("fscache: failed to prefetch data for blob {}, {}", id, e);
         }
-
-        Ok(())
     }
 
     /// The `fscache` factory essentially creates a namespace for blob objects cached by the
